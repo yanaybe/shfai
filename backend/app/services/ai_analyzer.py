@@ -32,11 +32,12 @@ CRITICAL ACCURACY RULES — violations make the product useless:
 4. DO NOT speculate about payer-specific documentation requirements unless you can cite a specific known policy (e.g., UHC Oxford requires authorization for 99215 visits over 60 min).
 
 5. CALIBRATION — score these correctly:
-   - Complete claim, zero issues found by rule engine, all fields present = score 5-12 (Low)
-   - Complete 99213 office visit, correct ICD-10, both NPIs, POS 11, commercial payer = score 8-15 (Low)
-   - Same visit but missing rendering NPI or modifier 25 omitted same-day = score 30-45 (Medium)
-   - Medicare claim with Z-code only + complex E&M + missing POS = score 60-75 (High)
-   - Anesthesia with no diagnosis, no NPI, no POS, no physical status modifier = score 85-95 (High)
+   - Complete claim, zero issues, all fields present = score 5-10 (Low)
+   - 1 high-severity issue (e.g. missing rendering NPI only) = score 28-35 (Medium)
+   - 2 high-severity issues (e.g. missing rendering NPI + missing modifier 25) = score 40-50 (Medium)
+   - 3+ high-severity issues OR missing POS + wrong dx pairing = score 60-75 (High)
+   - Any critical issue (missing billing NPI, no diagnosis, no CPT, anesthesia no physical status) = score 75-95 (High)
+   - Multiple critical issues = score 85-95 (High)
 
 6. If the rule engine found ZERO issues and the claim data is complete (both NPIs present, POS present, diagnosis codes present, CPT codes present), the score MUST be under 20 and the issues array MUST be empty unless you identify a genuine, citable denial pattern.
 
@@ -94,6 +95,54 @@ Risk scale:
 - 80-100 High: Critical missing elements guaranteeing rejection"""
 
 
+def _clamp_score(result: dict) -> dict:
+    """Enforce score bands based on issue severity counts, overriding AI drift."""
+    issues = result.get("issues", [])
+
+    if not issues:
+        result["risk_score"] = min(result.get("risk_score", 8), 8)
+        result["risk_level"] = "Low"
+        result["submission_readiness"] = "Ready"
+        return result
+
+    severities = [i.get("severity", "low") for i in issues]
+    n_critical = severities.count("critical")
+    n_high     = severities.count("high")
+    n_medium   = severities.count("medium")
+
+    score = result.get("risk_score", 50)
+
+    if n_critical >= 1:
+        # Any critical issue → High, floor 75
+        score = max(score, 75)
+        score = min(score, 97)
+    elif n_high >= 3:
+        # 3+ high issues → High, floor 60
+        score = max(score, 60)
+        score = min(score, 80)
+    elif n_high >= 1:
+        # 1–2 high issues, no critical → Medium, cap 55
+        score = max(score, 28)
+        score = min(score, 55)
+    else:
+        # Only medium/low issues → Medium low end, cap 45
+        score = max(score, 20)
+        score = min(score, 45)
+
+    result["risk_score"] = score
+    if score <= 25:
+        result["risk_level"] = "Low"
+    elif score <= 55:
+        result["risk_level"] = "Medium"
+        result["submission_readiness"] = "Needs Review"
+    else:
+        result["risk_level"] = "High"
+        if result.get("submission_readiness") == "Ready":
+            result["submission_readiness"] = "Needs Review"
+
+    return result
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def analyze_claim(claim_data: dict, rule_findings: list[RuleFinding]) -> dict:
     findings_payload = [
@@ -128,11 +177,7 @@ async def analyze_claim(claim_data: dict, rule_findings: list[RuleFinding]) -> d
     content = response.choices[0].message.content
     result = json.loads(content)
 
-    # Hard clamp: if AI found no issues, score cannot exceed 8
-    if not result.get("issues"):
-        result["risk_score"] = min(result.get("risk_score", 8), 8)
-        result["risk_level"] = "Low"
-        result["submission_readiness"] = "Ready"
+    result = _clamp_score(result)
 
     log.info(
         "AI analysis complete — risk_score=%s issues=%d fixes=%d",
