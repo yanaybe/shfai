@@ -32,12 +32,13 @@ CRITICAL ACCURACY RULES — violations make the product useless:
 4. DO NOT speculate about payer-specific documentation requirements unless you can cite a specific known policy (e.g., UHC Oxford requires authorization for 99215 visits over 60 min).
 
 5. CALIBRATION — score these correctly:
-   - Complete 99213 office visit, correct ICD-10, both NPIs, POS 11, commercial payer = score 10-20 (Low)
+   - Complete claim, zero issues found by rule engine, all fields present = score 5-12 (Low)
+   - Complete 99213 office visit, correct ICD-10, both NPIs, POS 11, commercial payer = score 8-15 (Low)
    - Same visit but missing rendering NPI or modifier 25 omitted same-day = score 30-45 (Medium)
    - Medicare claim with Z-code only + complex E&M + missing POS = score 60-75 (High)
    - Anesthesia with no diagnosis, no NPI, no POS, no physical status modifier = score 85-95 (High)
 
-6. If the rule engine found ZERO issues and the claim data is complete (both NPIs present, POS present, diagnosis codes present, CPT codes present), the score MUST be below 30 unless you identify a genuine, citable problem.
+6. If the rule engine found ZERO issues and the claim data is complete (both NPIs present, POS present, diagnosis codes present, CPT codes present), the score MUST be under 20 and the issues array MUST be empty unless you identify a genuine, citable denial pattern.
 
 7. DO NOT flag "potential" or "possible" issues. Only flag confirmed problems.
 
@@ -126,6 +127,13 @@ async def analyze_claim(claim_data: dict, rule_findings: list[RuleFinding]) -> d
 
     content = response.choices[0].message.content
     result = json.loads(content)
+
+    # Hard clamp: if AI found no issues, score cannot exceed 8
+    if not result.get("issues"):
+        result["risk_score"] = min(result.get("risk_score", 8), 8)
+        result["risk_level"] = "Low"
+        result["submission_readiness"] = "Ready"
+
     log.info(
         "AI analysis complete — risk_score=%s issues=%d fixes=%d",
         result.get("risk_score"),
