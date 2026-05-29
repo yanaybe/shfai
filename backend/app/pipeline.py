@@ -1,14 +1,10 @@
-"""
-Main processing pipeline — runs asynchronously after file upload.
-Orchestrates: OCR → Parse → Rule Engine → AI Analysis → Persist
-"""
 import time
 import logging
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models import Claim, ClaimIssue, ClaimFix, ClaimReport
+from app.models.claim import Claim, ClaimIssue, ClaimFix, ClaimReport
 from app.services.storage import storage
 from app.services.ocr import extract_text
 from app.services.parser import extract_claim_data
@@ -30,24 +26,20 @@ async def process_claim(claim_id: uuid.UUID) -> None:
         try:
             await _set_status(db, claim, "processing")
 
-            # ── Step 1: resolve local file path ──────────────────────────────
             file_path = await storage.get_path(claim.file_url)
-
-            # ── Step 2: OCR / text extraction ────────────────────────────────
             raw_text = extract_text(file_path)
             claim.raw_text = raw_text
 
-            # ── Step 3: structured data extraction ───────────────────────────
-            claim_data = await extract_claim_data(raw_text)
-            claim.extracted_data = claim_data
+            # Use existing extracted_data if user edited it before re-run
+            if not claim.extracted_data:
+                claim_data = await extract_claim_data(raw_text)
+                claim.extracted_data = claim_data
+            else:
+                claim_data = claim.extracted_data
 
-            # ── Step 4: rule engine ──────────────────────────────────────────
             rule_findings = run_rules(claim_data)
-
-            # ── Step 5: AI analysis ──────────────────────────────────────────
             analysis = await analyze_claim(claim_data, rule_findings)
 
-            # ── Step 6: persist results ──────────────────────────────────────
             claim.risk_score = analysis.get("risk_score")
             claim.risk_level = (analysis.get("risk_level") or "").lower()
 
@@ -63,20 +55,14 @@ async def process_claim(claim_id: uuid.UUID) -> None:
                     source=issue.get("source", "ai"),
                 ))
 
-            # Build issue_title → DB id map for fix linkage
             await db.flush()
-            result = await db.execute(
-                select(ClaimIssue).where(ClaimIssue.claim_id == claim.id)
-            )
-            issue_map: dict[str, uuid.UUID] = {
-                i.title: i.id for i in result.scalars().all()
-            }
+            result = await db.execute(select(ClaimIssue).where(ClaimIssue.claim_id == claim.id))
+            issue_map: dict[str, uuid.UUID] = {i.title: i.id for i in result.scalars().all()}
 
             for fix in analysis.get("suggested_fixes", []):
-                issue_title = fix.get("issue_title", "")
                 db.add(ClaimFix(
                     claim_id=claim.id,
-                    issue_id=issue_map.get(issue_title),
+                    issue_id=issue_map.get(fix.get("issue_title", "")),
                     action=fix.get("action"),
                     rationale=fix.get("rationale"),
                     priority=fix.get("priority"),
@@ -92,13 +78,17 @@ async def process_claim(claim_id: uuid.UUID) -> None:
                 processing_time_ms=elapsed_ms,
             ))
 
-            await _set_status(db, claim, "completed")
-            log.info("Claim %s completed in %dms", claim_id, elapsed_ms)
+            final_status = "analyzed"
+            if claim.risk_level == "high" or (claim.risk_score or 0) >= 56:
+                final_status = "needs_review"
+
+            await _set_status(db, claim, final_status)
+            log.info("Claim %s → %s (score=%s) in %dms", claim_id, final_status, claim.risk_score, elapsed_ms)
 
         except Exception as exc:
             log.exception("Pipeline failed for claim %s: %s", claim_id, exc)
             claim.processing_error = str(exc)
-            await _set_status(db, claim, "failed")
+            await _set_status(db, claim, "analyzed")
 
 
 async def _set_status(db: AsyncSession, claim: Claim, status: str) -> None:

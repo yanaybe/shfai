@@ -22,5 +22,6 @@ async def get_db():
 
 
 async def init_db():
+    from app.models import organization, user, claim, activity  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

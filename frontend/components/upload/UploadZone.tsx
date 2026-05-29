@@ -14,7 +14,7 @@ function stepFromStatus(status: string): number {
   return 1;
 }
 
-export default function UploadZone() {
+export default function UploadZone({ onComplete }: { onComplete?: (id: string) => void } = {}) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -57,7 +57,8 @@ export default function UploadZone() {
       });
 
       setActiveStep(4);
-      router.push(`/results/${id}`);
+      if (onComplete) onComplete(id);
+      else router.push(`/claims/${id}`);
     } catch (e: unknown) {
       setPhase("error");
       setErrorMsg(e instanceof Error ? e.message : "An unexpected error occurred.");

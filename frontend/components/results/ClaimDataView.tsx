@@ -1,7 +1,24 @@
-import { ExtractedData } from "@/lib/types";
+interface ExtractedData {
+  payer?: string | null;
+  payer_id?: string | null;
+  claim_type?: string | null;
+  patient_age?: string | null;
+  patient_gender?: string | null;
+  place_of_service?: string | null;
+  provider_type?: string | null;
+  total_charge?: string | null;
+  service_dates?: string[] | null;
+  icd10_codes?: string[] | null;
+  cpt_codes?: string[] | null;
+  modifiers?: string[] | null;
+  billing_provider_npi?: string | null;
+  rendering_provider_npi?: string | null;
+  notes?: string | null;
+  [key: string]: unknown;
+}
 
 interface Props {
-  data: ExtractedData;
+  data: Record<string, unknown>;
   fileName: string | null;
 }
 
@@ -28,6 +45,7 @@ function CodeList({ codes }: { codes: string[] }) {
 }
 
 export default function ClaimDataView({ data, fileName }: Props) {
+  const d = data as ExtractedData;
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-5">
       {fileName && (
@@ -38,45 +56,45 @@ export default function ClaimDataView({ data, fileName }: Props) {
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <Field label="Payer" value={data.payer} />
-        <Field label="Payer ID" value={data.payer_id} />
-        <Field label="Claim Type" value={data.claim_type} />
-        <Field label="Patient Age" value={data.patient_age} />
-        <Field label="Patient Gender" value={data.patient_gender} />
-        <Field label="Place of Service" value={data.place_of_service} />
-        <Field label="Provider Type" value={data.provider_type} />
-        <Field label="Total Charge" value={data.total_charge ? `$${data.total_charge}` : null} />
+        <Field label="Payer" value={d.payer} />
+        <Field label="Payer ID" value={d.payer_id} />
+        <Field label="Claim Type" value={d.claim_type} />
+        <Field label="Patient Age" value={d.patient_age} />
+        <Field label="Patient Gender" value={d.patient_gender} />
+        <Field label="Place of Service" value={d.place_of_service} />
+        <Field label="Provider Type" value={d.provider_type} />
+        <Field label="Total Charge" value={d.total_charge ? `$${d.total_charge}` : null} />
         <Field
           label="Service Dates"
-          value={data.service_dates?.length ? data.service_dates.join(", ") : null}
+          value={d.service_dates?.length ? d.service_dates.join(", ") : null}
         />
       </div>
 
       <div className="space-y-3 border-t border-slate-100 pt-4">
-        {data.icd10_codes?.length ? (
+        {d.icd10_codes?.length ? (
           <div>
             <dt className="text-xs text-slate-400 uppercase tracking-wider font-medium mb-1.5">
               ICD-10 Diagnosis Codes
             </dt>
-            <CodeList codes={data.icd10_codes} />
+            <CodeList codes={d.icd10_codes} />
           </div>
         ) : null}
 
-        {data.cpt_codes?.length ? (
+        {d.cpt_codes?.length ? (
           <div>
             <dt className="text-xs text-slate-400 uppercase tracking-wider font-medium mb-1.5">
               CPT / HCPCS Procedure Codes
             </dt>
-            <CodeList codes={data.cpt_codes} />
+            <CodeList codes={d.cpt_codes} />
           </div>
         ) : null}
 
-        {data.modifiers?.length ? (
+        {d.modifiers?.length ? (
           <div>
             <dt className="text-xs text-slate-400 uppercase tracking-wider font-medium mb-1.5">
               Modifiers
             </dt>
-            <CodeList codes={data.modifiers} />
+            <CodeList codes={d.modifiers} />
           </div>
         ) : null}
       </div>
@@ -84,22 +102,22 @@ export default function ClaimDataView({ data, fileName }: Props) {
       <div className="space-y-3 border-t border-slate-100 pt-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Field label="Billing Provider NPI" value={
-            data.billing_provider_npi
-              ? <span className="font-mono">{data.billing_provider_npi}</span>
+            d.billing_provider_npi
+              ? <span className="font-mono">{d.billing_provider_npi}</span>
               : <span className="text-red-500">Not detected</span>
           } />
           <Field label="Rendering Provider NPI" value={
-            data.rendering_provider_npi
-              ? <span className="font-mono">{data.rendering_provider_npi}</span>
+            d.rendering_provider_npi
+              ? <span className="font-mono">{d.rendering_provider_npi}</span>
               : <span className="text-amber-500">Not detected</span>
           } />
         </div>
       </div>
 
-      {data.notes && (
+      {d.notes && (
         <div className="border-t border-slate-100 pt-4">
           <Field label="Notes" value={
-            <span className="text-slate-500 italic">{data.notes}</span>
+            <span className="text-slate-500 italic">{d.notes}</span>
           } />
         </div>
       )}

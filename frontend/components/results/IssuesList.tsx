@@ -1,4 +1,5 @@
-import { ClaimIssue, Severity } from "@/lib/types";
+import { ClaimIssue } from "@/lib/types";
+type Severity = "critical" | "high" | "medium" | "low";
 
 interface Props {
   issues: ClaimIssue[];

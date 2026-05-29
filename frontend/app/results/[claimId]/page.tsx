@@ -51,7 +51,7 @@ export default function ResultsPage() {
     );
   }
 
-  if (claim.status === "failed") {
+  if (claim.processing_error && claim.status !== "analyzed" && claim.status !== "approved" && claim.status !== "needs_review") {
     return (
       <div className="max-w-xl mx-auto space-y-4">
         <div className="bg-red-50 border border-red-200 rounded-xl p-5">
