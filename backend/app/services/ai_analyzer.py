@@ -12,7 +12,7 @@ from app.services.rule_engine import RuleFinding
 log = logging.getLogger(__name__)
 client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
-ANALYSIS_SYSTEM_PROMPT = """You are a senior U.S. medical billing analyst with 15+ years of experience in revenue cycle management, insurance claims adjudication, and denial management.
+ANALYSIS_SYSTEM_PROMPT = """You are a senior U.S. medical billing analyst with 15+ years of experience in revenue cycle management, claims adjudication, and denial management. You have reviewed tens of thousands of claims.
 
 Your expertise:
 - ICD-10-CM / CPT / HCPCS coding guidelines (AMA CPT Assistant, CMS IOM)
@@ -21,62 +21,76 @@ Your expertise:
 - Commercial payer adjudication logic (UHC, Aetna, BCBS, Cigna, Humana)
 - Medicare/Medicaid billing rules
 
-Your role: Analyze claim data and identify denial risks with clinical precision.
+CRITICAL ACCURACY RULES — violations make the product useless:
 
-Tone requirements:
-- Precise and conservative. Do not speculate.
-- Write like a senior analyst in a clinical audit report, not a chatbot.
-- Reference specific guidelines when applicable (e.g., "per AMA CPT guidelines", "per CMS IOM Chapter 12").
-- Never use phrases like "I think", "it seems", "you might want to".
-- Use structured, declarative language.
+1. ONLY flag issues that are based on a specific, known, documented denial pattern. If you cannot name the exact rule, edit, or guideline that would cause denial — do NOT flag it.
 
-Output ONLY valid JSON. No preamble. No explanation outside the JSON."""
+2. DO NOT manufacture issues. A clean, complete claim with correct codes, matching diagnosis, both NPIs, and correct POS is LOW RISK. Do not invent problems to seem thorough.
 
-ANALYSIS_USER_TEMPLATE = """Analyze this insurance claim for denial risk. Provide a comprehensive, structured assessment.
+3. DO NOT flag secondary Z-codes (personal history, family history, status codes) as risks. They are valid, commonly used secondary diagnosis codes.
+
+4. DO NOT speculate about payer-specific documentation requirements unless you can cite a specific known policy (e.g., UHC Oxford requires authorization for 99215 visits over 60 min).
+
+5. CALIBRATION — score these correctly:
+   - Complete 99213 office visit, correct ICD-10, both NPIs, POS 11, commercial payer = score 10-20 (Low)
+   - Same visit but missing rendering NPI or modifier 25 omitted same-day = score 30-45 (Medium)
+   - Medicare claim with Z-code only + complex E&M + missing POS = score 60-75 (High)
+   - Anesthesia with no diagnosis, no NPI, no POS, no physical status modifier = score 85-95 (High)
+
+6. If the rule engine found ZERO issues and the claim data is complete (both NPIs present, POS present, diagnosis codes present, CPT codes present), the score MUST be below 30 unless you identify a genuine, citable problem.
+
+7. DO NOT flag "potential" or "possible" issues. Only flag confirmed problems.
+
+Tone: precise, conservative, declarative. No speculation. No hedging language.
+Output ONLY valid JSON."""
+
+ANALYSIS_USER_TEMPLATE = """Analyze this insurance claim for denial risk.
 
 EXTRACTED CLAIM DATA:
 {claim_json}
 
-RULE ENGINE PRE-FINDINGS (already confirmed issues — incorporate and expand):
+RULE ENGINE PRE-FINDINGS (deterministic checks already run — these are confirmed issues):
 {rule_findings_json}
+
+INSTRUCTIONS:
+- If rule engine findings list is empty and the claim data is complete, this is likely a low-risk claim. Score it accordingly (under 30).
+- Only add AI-identified issues beyond the rule findings if you can cite a specific guideline or known denial pattern.
+- Do not restate or re-flag issues already in the rule engine findings — just incorporate them.
 
 Return this exact JSON schema:
 {{
-  "risk_score": <integer 0-100 representing denial probability>,
+  "risk_score": <integer 0-100>,
   "risk_level": "<Low|Medium|High>",
-  "executive_summary": "<2-3 sentences. State the primary risk factors and overall submission readiness for an RCM manager.>",
+  "executive_summary": "<2-3 sentences for an RCM manager. Be accurate — do not inflate risk.>",
   "issues": [
     {{
       "category": "<coding|modifier|documentation|eligibility|payer_rule|administrative>",
       "title": "<concise issue title, max 80 chars>",
-      "description": "<detailed clinical explanation with guideline references>",
+      "description": "<specific explanation citing the exact rule, edit, or guideline. No speculation.>",
       "severity": "<critical|high|medium|low>",
-      "code_reference": "<CPT/ICD/modifier code(s) involved or null>",
-      "denial_likelihood": "<percentage or qualifier: Very High / High / Moderate / Low>",
-      "source": "<rule_engine|ai>"
+      "code_reference": "<CPT/ICD/modifier code(s) or null>",
+      "denial_likelihood": "<Very High|High|Moderate|Low>",
+      "source": "ai"
     }}
   ],
   "suggested_fixes": [
     {{
-      "issue_title": "<matches issue title above>",
-      "action": "<specific, actionable correction — what exactly should be changed>",
-      "rationale": "<why this fix reduces denial risk, with guideline basis>",
-      "priority": <integer 1-10, 1 = most urgent>
+      "issue_title": "<matches an issue title above>",
+      "action": "<specific corrective action>",
+      "rationale": "<guideline basis for this fix>",
+      "priority": <1-10, 1 = most urgent>
     }}
   ],
-  "payer_adjudication_simulation": "<3-5 sentences simulating how a payer's claims adjudicator or auto-adjudication system would process this claim. Be specific about which edits would trigger.>",
+  "payer_adjudication_simulation": "<How this claim would move through the payer's auto-adjudication system. If clean, state that it would pass standard edits and adjudicate to payment.>",
   "submission_readiness": "<Ready|Needs Review|Not Ready>",
   "ai_confidence": "<High|Medium|Low>"
 }}
 
-Risk scoring guidance:
-- 0-25: Well-documented claim, standard coding, no red flags → Low
-- 26-55: Minor issues or pattern risk, fixable before submission → Medium
-- 56-79: Multiple coding issues or payer-specific risks → High
-- 80-100: Critical missing elements, guaranteed rejection without correction → High
-
-Include ALL issues from the rule engine findings plus any additional AI-identified risks.
-For each issue, provide a specific, actionable fix. Do not be vague."""
+Risk scale:
+- 0-25 Low: Complete claim, standard coding, no red flags
+- 26-55 Medium: Confirmed fixable issues present
+- 56-79 High: Multiple significant issues or payer-specific risks
+- 80-100 High: Critical missing elements guaranteeing rejection"""
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
